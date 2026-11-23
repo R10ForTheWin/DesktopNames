@@ -63,6 +63,10 @@ enum Names {
         let n = (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String])?[key]
         return (n?.isEmpty ?? true) ? nil : n
     }
+    /// Name shown for a desktop: its own name, else the default for unnamed desktops (e.g. "Work").
+    static func display(_ key: String) -> String? {
+        get(key) ?? UserDefaults.standard.string(forKey: "defaultName").flatMap { $0.isEmpty ? nil : $0 }
+    }
     static func set(_ key: String, _ name: String?) {
         var all = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
         all[key] = name
@@ -86,6 +90,12 @@ enum LabelImages {
               let img = NSImage(contentsOf: dir.appendingPathComponent(file)) else { return nil }
         cache[key] = img
         return img
+    }
+    static let defaultKey = "_default"
+    /// Image shown for a desktop: its own image, else the default for unnamed desktops.
+    static func display(_ key: String) -> NSImage? {
+        if let i = get(key) { return i }
+        return Names.get(key) == nil ? get(defaultKey) : nil
     }
     /// Copies a small version of the image into Application Support so the original can move.
     static func set(_ key: String, from url: URL?) {
@@ -349,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func updateTitle() {
         guard let s = currentSpace() else { statusItem.button?.title = "•"; return }
         // Keep the menu bar item compact so it isn't pushed behind the notch.
-        let full = Names.get(s.key)
+        let full = Names.display(s.key)
         var text = full ?? "\(s.number)"
         let maxChars = 10
         if text.count > maxChars { text = String(text.prefix(maxChars - 1)).trimmingCharacters(in: .whitespaces) + "…" }
@@ -394,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for label in g.labels {
                 guard label.number - 1 < spaces.count else { continue }
                 let key = spaces[label.number - 1].key
-                let name = Names.get(key), image = LabelImages.get(key)
+                let name = Names.display(key), image = LabelImages.display(key)
                 guard name != nil || image != nil else { continue }
                 if i >= labelWindows.count { labelWindows.append(LabelWindow()) }
                 labelWindows[i].show(text: name ?? "Desktop \(label.number)", image: image,
@@ -415,7 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (di, d) in all.enumerated() {
             if all.count > 1 { menu.addItem(.sectionHeader(title: "Display \(di + 1)")) }
             for s in d.spaces {
-                let name = Names.get(s.key)
+                let name = Names.display(s.key)
                 let title = name.map { "\(s.number)  \($0)" } ?? "\(s.number)  Desktop \(s.number)"
                 let item = NSMenuItem(title: title, action: #selector(renameItem(_:)), keyEquivalent: "")
                 item.representedObject = s.key
