@@ -23,6 +23,8 @@ Give each desktop its own color and label so you know where you are even before 
 
 <p align="center"><img src="docs/wallpapers.png" alt="Ten numbered desktop wallpapers: Virtual Meetings, Safari, Mail, Calendar, Chat, AI, Word, Excel, Unassigned, Chrome"></p>
 
+Full-size versions (3456×2234) are in [`wallpapers/`](wallpapers). Set each one in **System Settings → Wallpaper** while you're on that desktop.
+
 ## How it works
 
 1. Reads the list of Spaces (and their stable UUIDs) through the read-only `CGSCopyManagedDisplaySpaces` call.
