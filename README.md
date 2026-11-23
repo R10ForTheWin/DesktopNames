@@ -17,6 +17,12 @@ macOS has never let you rename Spaces. Mission Control always shows *Desktop 1 â
 - **Multiple displays** supported.
 - Tiny: one Swift file, no dependencies.
 
+## Pair it with matching wallpapers
+
+Give each desktop its own color and label so you know where you are even before Mission Control opens:
+
+<p align="center"><img src="docs/wallpapers.png" alt="Ten numbered desktop wallpapers: Virtual Meetings, Safari, Mail, Calendar, Chat, AI, Word, Excel, Unassigned, Chrome"></p>
+
 ## How it works
 
 1. Reads the list of Spaces (and their stable UUIDs) through the read-only `CGSCopyManagedDisplaySpaces` call.
