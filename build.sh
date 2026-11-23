@@ -1,0 +1,41 @@
+#!/bin/bash
+# Builds DesktopNames.app and installs it to ~/Applications.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+BUILD="$(mktemp -d)"
+APP="$BUILD/DesktopNames.app"
+
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp AppIcon.icns "$APP/Contents/Resources/"
+
+swiftc -O -swift-version 5 DesktopNames.swift -o "$APP/Contents/MacOS/DesktopNames" \
+  -framework Cocoa -framework ApplicationServices -framework ServiceManagement
+
+cat > "$APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>DesktopNames</string>
+  <key>CFBundleDisplayName</key><string>DesktopNames</string>
+  <key>CFBundleIdentifier</key><string>local.desktopnames</string>
+  <key>CFBundleExecutable</key><string>DesktopNames</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+</dict>
+</plist>
+PLIST
+
+xattr -cr "$APP"
+codesign --force --sign - "$APP"
+
+mkdir -p "$HOME/Applications"
+pkill -x DesktopNames 2>/dev/null || true
+rm -rf "$HOME/Applications/DesktopNames.app"
+cp -R "$APP" "$HOME/Applications/"
+echo "Installed to ~/Applications/DesktopNames.app"
