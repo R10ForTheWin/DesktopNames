@@ -5,6 +5,7 @@
 import Cocoa
 import ApplicationServices
 import ServiceManagement
+import UniformTypeIdentifiers
 
 // MARK: - Private SkyLight calls (read-only; safe with SIP on)
 
@@ -65,6 +66,42 @@ enum Names {
     static func set(_ key: String, _ name: String?) {
         var all = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
         all[key] = name
+        UserDefaults.standard.set(all, forKey: defaultsKey)
+    }
+}
+
+/// Optional background image per desktop, shown behind its name in Mission Control.
+enum LabelImages {
+    static let defaultsKey = "spaceImages"
+    static var cache: [String: NSImage] = [:]
+    static var dir: URL {
+        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("DesktopNames/Images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+    static func get(_ key: String) -> NSImage? {
+        if let i = cache[key] { return i }
+        guard let file = (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String])?[key],
+              let img = NSImage(contentsOf: dir.appendingPathComponent(file)) else { return nil }
+        cache[key] = img
+        return img
+    }
+    /// Copies a small version of the image into Application Support so the original can move.
+    static func set(_ key: String, from url: URL?) {
+        var all = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
+        cache[key] = nil
+        guard let url, let src = NSImage(contentsOf: url) else {
+            all[key] = nil; UserDefaults.standard.set(all, forKey: defaultsKey); return
+        }
+        let w: CGFloat = 800, h = w * src.size.height / max(src.size.width, 1)
+        let small = NSImage(size: NSSize(width: w, height: h))
+        small.lockFocus(); src.draw(in: NSRect(x: 0, y: 0, width: w, height: h)); small.unlockFocus()
+        guard let tiff = small.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else { return }
+        let file = "\(key).jpg"
+        try? data.write(to: dir.appendingPathComponent(file))
+        all[key] = file
         UserDefaults.standard.set(all, forKey: defaultsKey)
     }
 }
@@ -187,6 +224,8 @@ final class MissionControlReader {
 final class LabelWindow: NSPanel {
     let field = NSTextField(labelWithString: "")
     let bg = NSVisualEffectView()
+    let imageLayer = CALayer()
+    let dimLayer = CALayer()
 
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -206,13 +245,19 @@ final class LabelWindow: NSPanel {
         bg.appearance = NSAppearance(named: .darkAqua)
         contentView = bg
 
+        imageLayer.contentsGravity = .resizeAspectFill
+        imageLayer.masksToBounds = true
+        dimLayer.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
+        bg.layer?.insertSublayer(imageLayer, at: 0)
+        bg.layer?.insertSublayer(dimLayer, above: imageLayer)
+
         field.alignment = .center
         field.textColor = .white
         field.lineBreakMode = .byTruncatingTail
         bg.addSubview(field)
     }
 
-    func show(text: String, axFrame: CGRect, selected: Bool) {
+    func show(text: String, image: NSImage?, axFrame: CGRect, selected: Bool) {
         // AX uses top-left origin on the primary screen; Cocoa uses bottom-left.
         let primaryH = NSScreen.screens.first?.frame.height ?? 0
         let fontSize = max(11, min(18, axFrame.height * 0.55))
@@ -224,8 +269,23 @@ final class LabelWindow: NSPanel {
         let x = axFrame.midX - w / 2
         let y = primaryH - axFrame.midY - h / 2
         setFrame(NSRect(x: x, y: y, width: w, height: h), display: false)
-        bg.layer?.backgroundColor = (selected ? NSColor.controlAccentColor.withAlphaComponent(0.85)
-                                              : NSColor.black.withAlphaComponent(0.35)).cgColor
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let bounds = CGRect(x: 0, y: 0, width: w, height: h)
+        imageLayer.frame = bounds; dimLayer.frame = bounds
+        if let image {
+            imageLayer.contents = image
+            imageLayer.isHidden = false; dimLayer.isHidden = false
+            bg.layer?.backgroundColor = NSColor.clear.cgColor
+            bg.layer?.borderWidth = selected ? 2 : 0
+            bg.layer?.borderColor = NSColor.white.cgColor
+        } else {
+            imageLayer.isHidden = true; dimLayer.isHidden = true
+            bg.layer?.borderWidth = 0
+            bg.layer?.backgroundColor = (selected ? NSColor.controlAccentColor.withAlphaComponent(0.85)
+                                                  : NSColor.black.withAlphaComponent(0.35)).cgColor
+        }
+        CATransaction.commit()
+        field.shadow = { let sh = NSShadow(); sh.shadowColor = .black.withAlphaComponent(0.6); sh.shadowBlurRadius = 2; sh.shadowOffset = .zero; return sh }()
         let fh = field.intrinsicContentSize.height
         field.frame = NSRect(x: 6, y: (h - fh) / 2, width: w - 12, height: fh)
         orderFrontRegardless()
@@ -332,10 +392,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for g in groups {
             let spaces = spacesFor(axRect: g.displayFrame ?? g.labels.first?.frame, all: all)
             for label in g.labels {
-                guard label.number - 1 < spaces.count,
-                      let name = Names.get(spaces[label.number - 1].key) else { continue }
+                guard label.number - 1 < spaces.count else { continue }
+                let key = spaces[label.number - 1].key
+                let name = Names.get(key), image = LabelImages.get(key)
+                guard name != nil || image != nil else { continue }
                 if i >= labelWindows.count { labelWindows.append(LabelWindow()) }
-                labelWindows[i].show(text: name, axFrame: label.frame, selected: label.selected)
+                labelWindows[i].show(text: name ?? "Desktop \(label.number)", image: image,
+                                     axFrame: label.frame, selected: label.selected)
                 i += 1
             }
         }
@@ -365,6 +428,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         let rc = NSMenuItem(title: "Rename Current Desktop…", action: #selector(renameCurrent), keyEquivalent: "r")
         rc.target = self; menu.addItem(rc)
+        let si = NSMenuItem(title: "Set Label Image for Current Desktop…", action: #selector(setImageCurrent), keyEquivalent: "")
+        si.target = self; menu.addItem(si)
+        if let s = currentSpace(), LabelImages.get(s.key) != nil {
+            let ri = NSMenuItem(title: "Remove Label Image for Current Desktop", action: #selector(removeImageCurrent), keyEquivalent: "")
+            ri.target = self; menu.addItem(ri)
+        }
         menu.addItem(.separator())
         if !AXIsProcessTrusted() {
             let ax = NSMenuItem(title: "⚠︎ Grant Accessibility Permission…", action: #selector(openAXSettings), keyEquivalent: "")
@@ -406,6 +475,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Names.set(key, v.isEmpty ? nil : v)
             updateTitle()
         }
+    }
+
+    @objc func setImageCurrent() {
+        guard let s = currentSpace() else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.message = "Choose a background image for this desktop's label in Mission Control"
+        if panel.runModal() == .OK, let url = panel.url { LabelImages.set(s.key, from: url) }
+    }
+
+    @objc func removeImageCurrent() {
+        guard let s = currentSpace() else { return }
+        LabelImages.set(s.key, from: nil)
     }
 
     @objc func openAXSettings() {
