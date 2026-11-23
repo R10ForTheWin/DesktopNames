@@ -11,6 +11,7 @@ macOS has never let you rename Spaces. Mission Control always shows *Desktop 1 â
 ## Features
 
 - **Names in Mission Control.** Your names are drawn right over the "Desktop N" labels in the Spaces bar and follow it as it animates. The current desktop is highlighted.
+- **Wallpaper label backgrounds (optional).** Give each desktop's label its own image, like that desktop's wallpaper, via *Set Label Image for Current Desktopâ€¦*. The current desktop gets a white outline.
 - **Menu bar label.** Shows the name of the desktop you're on (shortened so it doesn't get pushed behind the notch). Hover for the full name.
 - **Rename from anywhere.** Click the menu bar item, or open the app from Spotlight to pop the menu up at your cursor (handy when the menu bar is crowded).
 - **Names stick to the desktop, not the number.** Reorder desktops in Mission Control and the names move with them.
