@@ -32,7 +32,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 xattr -cr "$APP"
-codesign --force --sign - "$APP"
+# Sign with the local "DesktopNames Local Signing" identity if present (keeps the
+# Accessibility permission across rebuilds); fall back to ad-hoc signing.
+ID=$(security find-identity -p codesigning 2>/dev/null | awk '/DesktopNames Local Signing/ {print $2; exit}')
+if [ -n "$ID" ] && codesign --force --sign "$ID" "$APP"; then echo "Signed with local identity"; else codesign --force --sign - "$APP"; fi
 
 mkdir -p "$HOME/Applications"
 pkill -x DesktopNames 2>/dev/null || true
