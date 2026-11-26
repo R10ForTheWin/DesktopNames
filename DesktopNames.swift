@@ -155,11 +155,21 @@ final class MissionControlReader {
     private var treeDumps = 0
     var openedAt: Date?
 
+    private var lastProblemLog = Date.distantPast
+
+    /// Logs a problem at most once a minute so the log stays useful without flooding.
+    private func logProblem(_ s: String) {
+        guard Date().timeIntervalSince(lastProblemLog) > 60 else { return }
+        lastProblemLog = Date(); logLine(s)
+    }
+
     private func dock() -> AXUIElement? {
         if let d = dockApp { return d }
         guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier else { return nil }
-        dockApp = AXUIElementCreateApplication(pid)
-        return dockApp
+        let d = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(d, 0.5) // never let a busy Dock stall the app
+        dockApp = d
+        return d
     }
 
     /// Returns nil when Mission Control is closed; otherwise label groups per display (keyed by display frame).
@@ -174,7 +184,18 @@ final class MissionControlReader {
             var s = ""; for k in kids { dumpTree(k, 0, into: &s, maxDepth: 1) }
             logLine("Dock children while something extra is open:\n\(s)")
         }
-        guard let mc = kids.first(where: { axString($0, kAXIdentifierAttribute) == "mc" }) ?? extra.first else { return nil }
+        // With a full-screen app around, the Dock can hold a dead Mission Control element
+        // next to the live one, so try every candidate and keep the first that has labels.
+        let candidates = kids.filter { axString($0, kAXIdentifierAttribute) == "mc" }
+            + extra.filter { axString($0, kAXIdentifierAttribute) != "mc" }
+        guard !candidates.isEmpty else { return nil }
+        let alive = candidates.filter { el in
+            var v: AnyObject?
+            return AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &v) != .invalidUIElement
+        }
+        // Only dead leftovers: Mission Control is really closed.
+        guard !alive.isEmpty else { dockApp = nil; return nil }
+        var mc = alive[0]
 
         var groups: [(CGRect?, [MCLabel])] = []
         var anyFound = false
@@ -200,7 +221,10 @@ final class MissionControlReader {
             }
             for c in axChildren(e) { walk(c, displayFrame: df) }
         }
-        walk(mc, displayFrame: nil)
+        for c in alive {
+            walk(c, displayFrame: nil)
+            if anyFound { mc = c; break }
+        }
 
         if openedAt == nil { openedAt = Date() }
         if treeDumps < 3, Date().timeIntervalSince(openedAt!) > 1.2 {
@@ -209,10 +233,18 @@ final class MissionControlReader {
             logLine("Mission Control tree:\n\(s)")
         }
 
-        if !anyFound && !dumpedOnce {
-            dumpedOnce = true
-            var s = ""; dumpTree(mc, into: &s)
-            logLine("Mission Control open but no desktop labels found. Tree:\n\(s)")
+        if !anyFound {
+            // The cached Dock handle can go stale (sleep, display changes); reconnect next tick.
+            var v: AnyObject?
+            let err = AXUIElementCopyAttributeValue(mc, kAXRoleAttribute as CFString, &v)
+            dockApp = nil
+            if !dumpedOnce {
+                dumpedOnce = true
+                var s = ""; dumpTree(mc, into: &s)
+                logLine("Mission Control open but no desktop labels found (AX error \(err.rawValue), \(alive.count)/\(candidates.count) candidates alive). Tree:\n\(s)")
+            } else {
+                logProblem("Still no desktop labels (AX error \(err.rawValue), \(alive.count)/\(candidates.count) candidates alive, trusted \(AXIsProcessTrusted())); reconnecting to Dock")
+            }
         }
         if anyFound && !loggedLabels {
             loggedLabels = true
@@ -252,6 +284,9 @@ final class LabelWindow: NSPanel {
         bg.wantsLayer = true
         bg.layer?.cornerRadius = 8
         bg.layer?.masksToBounds = true
+        // Behind-window blur ignores the layer's rounded clip, leaving light square
+        // corners; a resizable rounded mask image is the supported way to round it.
+        bg.maskImage = LabelWindow.roundedMask(radius: 8)
         bg.appearance = NSAppearance(named: .darkAqua)
         contentView = bg
 
@@ -265,6 +300,18 @@ final class LabelWindow: NSPanel {
         field.textColor = .white
         field.lineBreakMode = .byTruncatingTail
         bg.addSubview(field)
+    }
+
+    static func roundedMask(radius r: CGFloat) -> NSImage {
+        let side = r * 2 + 1
+        let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+            return true
+        }
+        img.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
+        img.resizingMode = .stretch
+        return img
     }
 
     func show(text: String, image: NSImage?, axFrame: CGRect, selected: Bool) {

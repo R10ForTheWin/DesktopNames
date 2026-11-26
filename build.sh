@@ -35,7 +35,17 @@ xattr -cr "$APP"
 # Sign with the local "DesktopNames Local Signing" identity if present (keeps the
 # Accessibility permission across rebuilds); fall back to ad-hoc signing.
 ID=$(security find-identity -p codesigning 2>/dev/null | awk '/DesktopNames Local Signing/ {print $2; exit}')
-if [ -n "$ID" ] && codesign --force --sign "$ID" "$APP"; then echo "Signed with local identity"; else codesign --force --sign - "$APP"; fi
+if [ -n "$ID" ]; then
+  # Retry once: the keychain sometimes refuses the first request (errSecInternalComponent).
+  if ! codesign --force --sign "$ID" "$APP" && ! codesign --force --sign "$ID" "$APP"; then
+    echo "ERROR: couldn't sign with 'DesktopNames Local Signing'. Not installing, because an"
+    echo "ad-hoc build would lose the Accessibility permission. Unlock the keychain and rerun."
+    exit 1
+  fi
+  echo "Signed with local identity"
+else
+  codesign --force --sign - "$APP"
+fi
 
 mkdir -p "$HOME/Applications"
 pkill -x DesktopNames 2>/dev/null || true
